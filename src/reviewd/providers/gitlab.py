@@ -59,7 +59,9 @@ class GitlabProvider(GitProvider):
         refs = self._diff_refs.get((repo_slug, pr_id))
         if refs is None or (source_commit and refs['head_sha'] != source_commit):
             self.get_pr(repo_slug, pr_id)
-            refs = self._diff_refs[(repo_slug, pr_id)]
+            refs = self._diff_refs.get((repo_slug, pr_id))
+            if refs is None:
+                raise RuntimeError(f'MR !{pr_id} has no diff_refs yet, cannot position inline comment')
         return refs
 
     def list_open_prs(self, repo_slug: str) -> list[PRInfo]:

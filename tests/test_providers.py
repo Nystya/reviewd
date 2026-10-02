@@ -396,6 +396,14 @@ def test_gitlab_retries_on_rate_limit(monkeypatch):
     assert sleeps == [3]
 
 
+@respx.mock
+def test_gitlab_inline_comment_without_diff_refs_raises_clear_error():
+    respx.get(f'{GL_MRS}/7').mock(return_value=httpx.Response(200, json=_gl_mr(diff_refs=None)))
+    discussions = respx.post(f'{GL_MRS}/7/discussions')
+    with pytest.raises(RuntimeError, match='MR !7 has no diff_refs yet'):
+        _gl_provider().post_comment('grp/sub/repo', 7, 'body', file_path='a.py', line=3, source_commit='head1')
+    assert not discussions.called
+
 
 @pytest.mark.parametrize(
     ('url', 'expected'),
