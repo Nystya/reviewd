@@ -202,6 +202,26 @@ def _gl_provider(**kwargs):
     return GitlabProvider(GitlabConfig(token='fake', **kwargs))
 
 
+GL_DIFF = """@@ -10,4 +10,5 @@ def handler():
+ a = 1
+-b = 2
++c = 3
++d = 4
+ e = 5
+ f = 6
+@@ -30,2 +31,3 @@ def other():
+ g = 7
++h = 8
+ i = 9
+"""
+
+
+def _gl_diffs(files=None):
+    if files is None:
+        files = [{'old_path': 'app.py', 'new_path': 'app.py', 'diff': GL_DIFF}]
+    return respx.get(f'{GL_MRS}/7/diffs').mock(return_value=httpx.Response(200, json=files))
+
+
 @respx.mock
 def test_gitlab_list_open_prs():
     route = respx.get(GL_MRS).mock(return_value=httpx.Response(200, json=[_gl_mr()]))
@@ -284,6 +304,7 @@ def test_gitlab_post_inline_comment_uses_cached_diff_refs():
     route = respx.post(f'{GL_MRS}/7/discussions').mock(
         return_value=httpx.Response(201, json={'id': 'disc-1', 'notes': [{'id': 777}]}),
     )
+    _gl_diffs()
     provider = _gl_provider()
     provider.list_open_prs('grp/sub/repo')
 
@@ -310,6 +331,7 @@ def test_gitlab_post_inline_comment_fetches_diff_refs_when_not_cached():
     route = respx.post(f'{GL_MRS}/7/discussions').mock(
         return_value=httpx.Response(201, json={'notes': [{'id': 1}]}),
     )
+    _gl_diffs()
     _gl_provider().post_comment('grp/sub/repo', 7, 'Bug', file_path='app.py', line=3)
     assert get_mr.call_count == 1
     assert json.loads(route.calls.last.request.content)['position']['head_sha'] == 'head1'
@@ -322,6 +344,7 @@ def test_gitlab_post_inline_comment_refetches_when_head_moved():
     route = respx.post(f'{GL_MRS}/7/discussions').mock(
         return_value=httpx.Response(201, json={'notes': [{'id': 1}]}),
     )
+    _gl_diffs()
     provider = _gl_provider()
     provider.list_open_prs('grp/sub/repo')
 
@@ -349,8 +372,81 @@ def test_gitlab_post_range_comment_anchors_on_end_line():
     route = respx.post(f'{GL_MRS}/7/discussions').mock(
         return_value=httpx.Response(201, json={'notes': [{'id': 1}]}),
     )
+    _gl_diffs()
     _gl_provider().post_comment('grp/sub/repo', 7, 'Range', file_path='app.py', line=10, end_line=14)
     assert json.loads(route.calls.last.request.content)['position']['new_line'] == 14
+
+
+@pytest.mark.parametrize(
+    ('line', 'old_line'),
+    [
+        (5, 5),  # unchanged, before the first hunk
+        (10, 10),  # context line inside a hunk
+        (11, None),  # added line
+        (13, 12),  # context line after a removal and two additions
+        (20, 19),  # unchanged, between hunks
+        (32, None),  # added line in the second hunk
+        (33, 31),  # context line in the second hunk
+        (40, 38),  # unchanged, after the last hunk
+    ],
+)
+@respx.mock
+def test_gitlab_inline_comment_line_mapping(line, old_line):
+    respx.get(f'{GL_MRS}/7').mock(return_value=httpx.Response(200, json=_gl_mr()))
+    _gl_diffs()
+    route = respx.post(f'{GL_MRS}/7/discussions').mock(return_value=httpx.Response(201, json={'notes': [{'id': 1}]}))
+
+    _gl_provider().post_comment('grp/sub/repo', 7, 'Bug', file_path='app.py', line=line, source_commit='head1')
+
+    position = json.loads(route.calls.last.request.content)['position']
+    assert position['new_line'] == line
+    assert position.get('old_line') == old_line
+
+
+@respx.mock
+def test_gitlab_inline_comment_on_renamed_file_uses_old_path():
+    respx.get(f'{GL_MRS}/7').mock(return_value=httpx.Response(200, json=_gl_mr()))
+    _gl_diffs([{'old_path': 'old/app.py', 'new_path': 'app.py', 'diff': GL_DIFF}])
+    route = respx.post(f'{GL_MRS}/7/discussions').mock(return_value=httpx.Response(201, json={'notes': [{'id': 1}]}))
+
+    _gl_provider().post_comment('grp/sub/repo', 7, 'Bug', file_path='app.py', line=13, source_commit='head1')
+
+    position = json.loads(route.calls.last.request.content)['position']
+    assert (position['old_path'], position['new_path'], position['old_line']) == ('old/app.py', 'app.py', 12)
+
+
+@pytest.mark.parametrize(
+    'files',
+    [
+        [{'old_path': 'app.py', 'new_path': 'app.py', 'diff': ''}],  # collapsed / too large
+        [{'old_path': 'other.py', 'new_path': 'other.py', 'diff': GL_DIFF}],  # file missing from the diff
+    ],
+)
+@respx.mock
+def test_gitlab_inline_comment_without_file_diff_sends_new_line_only(files):
+    respx.get(f'{GL_MRS}/7').mock(return_value=httpx.Response(200, json=_gl_mr()))
+    _gl_diffs(files)
+    route = respx.post(f'{GL_MRS}/7/discussions').mock(return_value=httpx.Response(201, json={'notes': [{'id': 1}]}))
+
+    _gl_provider().post_comment('grp/sub/repo', 7, 'Bug', file_path='app.py', line=13, source_commit='head1')
+
+    position = json.loads(route.calls.last.request.content)['position']
+    assert position['new_line'] == 13
+    assert 'old_line' not in position
+    assert position['old_path'] == 'app.py'
+
+
+@respx.mock
+def test_gitlab_diff_fetched_once_per_head_commit():
+    respx.get(f'{GL_MRS}/7').mock(return_value=httpx.Response(200, json=_gl_mr()))
+    diffs = _gl_diffs()
+    respx.post(f'{GL_MRS}/7/discussions').mock(return_value=httpx.Response(201, json={'notes': [{'id': 1}]}))
+    provider = _gl_provider()
+
+    for line in (10, 13, 20):
+        provider.post_comment('grp/sub/repo', 7, 'Bug', file_path='app.py', line=line, source_commit='head1')
+
+    assert diffs.call_count == 1
 
 
 @pytest.mark.parametrize(('status', 'expected'), [(204, True), (404, False)])
@@ -367,11 +463,37 @@ def test_gitlab_approve_success():
     assert _gl_provider().approve_pr('grp/sub/repo', 7) is True
 
 
-@pytest.mark.parametrize('status', [401, 403, 405])
+@pytest.mark.parametrize('status', [403, 405])
 @respx.mock
 def test_gitlab_approve_refused_returns_gracefully(status):
     respx.post(f'{GL_MRS}/7/approve').mock(return_value=httpx.Response(status, json={'message': 'nope'}))
     assert _gl_provider().approve_pr('grp/sub/repo', 7) is False
+
+
+@respx.mock
+def test_gitlab_approve_401_with_valid_token_returns_gracefully():
+    respx.post(f'{GL_MRS}/7/approve').mock(return_value=httpx.Response(401, json={'message': '401 Unauthorized'}))
+    user = respx.get('https://gitlab.com/api/v4/user').mock(return_value=httpx.Response(200, json={'username': 'bot'}))
+    assert _gl_provider().approve_pr('grp/sub/repo', 7) is False
+    assert user.called
+
+
+@respx.mock
+def test_gitlab_approve_401_with_rejected_token_raises():
+    respx.post(f'{GL_MRS}/7/approve').mock(return_value=httpx.Response(401, json={'message': '401 Unauthorized'}))
+    respx.get('https://gitlab.com/api/v4/user').mock(return_value=httpx.Response(401))
+    with pytest.raises(httpx.HTTPStatusError) as exc:
+        _gl_provider().approve_pr('grp/sub/repo', 7)
+    assert exc.value.request.url.path.endswith('/approve')
+
+
+@respx.mock
+def test_gitlab_approve_insufficient_scope_raises():
+    respx.post(f'{GL_MRS}/7/approve').mock(
+        return_value=httpx.Response(403, json={'error': 'insufficient_scope', 'scope': 'api'}),
+    )
+    with pytest.raises(httpx.HTTPStatusError):
+        _gl_provider().approve_pr('grp/sub/repo', 7)
 
 
 @respx.mock

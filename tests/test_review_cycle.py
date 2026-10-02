@@ -121,6 +121,7 @@ def _mock_gitlab_mr():
             },
         ),
     )
+    respx.get(f'{GL_MR}/diffs').mock(return_value=httpx.Response(200, json=[]))
 
 
 @respx.mock
