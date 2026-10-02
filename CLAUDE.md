@@ -51,7 +51,7 @@ rm -rf dist && uv build && uv publish
 - Claude CLI rejects nested sessions — must unset `CLAUDECODE` env var in subprocess
 - Gemini CLI loads global extensions by default — use `-e none` to disable
 - Codex CLI outputs raw JSON (no markdown fences) — extract_json falls back to raw JSON object parsing
-- GitLab inline comments only land on lines inside the MR diff (API rejects others; commenter skips them). `critical_task` is BitBucket-only
+- GitLab inline comments anchor only on lines shown in the MR diff; findings on other lines (or in files GitLab collapsed) become file-level comments that name the line. `critical_task` is BitBucket-only
 - Inline suggestions are single-line only (TODO: multi-line support)
 - AI may hallucinate line numbers — prompt instructs to double-check but not guaranteed
 - `cli: claude_interactive` drives an *interactive* Claude session over a pexpect PTY (no `--print`, no tmux), to bill against the subscription instead of API credits. The prompt tells Claude to write the review JSON to a temp file via `Write` + atomic `mv`; reviewd waits for that file (watching the PTY stream for usage/login errors + an overall timeout). Requires `claude` logged in via `/login`; if `ANTHROPIC_API_KEY` is exported it may still be used. Runs with `--dangerously-skip-permissions` so Write/Bash run unattended in the worktree.

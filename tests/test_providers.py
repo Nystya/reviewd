@@ -360,6 +360,7 @@ def test_gitlab_post_file_level_comment():
     route = respx.post(f'{GL_MRS}/7/discussions').mock(
         return_value=httpx.Response(201, json={'notes': [{'id': 1}]}),
     )
+    _gl_diffs()
     _gl_provider().post_comment('grp/sub/repo', 7, 'Whole file', file_path='app.py')
     position = json.loads(route.calls.last.request.content)['position']
     assert position['position_type'] == 'file'
@@ -380,14 +381,11 @@ def test_gitlab_post_range_comment_anchors_on_end_line():
 @pytest.mark.parametrize(
     ('line', 'old_line'),
     [
-        (5, 5),  # unchanged, before the first hunk
         (10, 10),  # context line inside a hunk
         (11, None),  # added line
         (13, 12),  # context line after a removal and two additions
-        (20, 19),  # unchanged, between hunks
         (32, None),  # added line in the second hunk
         (33, 31),  # context line in the second hunk
-        (40, 38),  # unchanged, after the last hunk
     ],
 )
 @respx.mock
@@ -416,24 +414,34 @@ def test_gitlab_inline_comment_on_renamed_file_uses_old_path():
 
 
 @pytest.mark.parametrize(
-    'files',
+    ('files', 'line', 'end_line', 'label', 'old_path'),
     [
-        [{'old_path': 'app.py', 'new_path': 'app.py', 'diff': ''}],  # collapsed / too large
-        [{'old_path': 'other.py', 'new_path': 'other.py', 'diff': GL_DIFF}],  # file missing from the diff
+        ([{'old_path': 'app.py', 'new_path': 'app.py', 'diff': GL_DIFF}], 5, None, 'Line 5', 'app.py'),
+        ([{'old_path': 'app.py', 'new_path': 'app.py', 'diff': GL_DIFF}], 20, None, 'Line 20', 'app.py'),
+        ([{'old_path': 'app.py', 'new_path': 'app.py', 'diff': GL_DIFF}], 40, None, 'Line 40', 'app.py'),
+        ([{'old_path': 'app.py', 'new_path': 'app.py', 'diff': GL_DIFF}], 3, 5, 'Lines 3-5', 'app.py'),
+        ([{'old_path': 'old/app.py', 'new_path': 'app.py', 'diff': GL_DIFF}], 20, None, 'Line 20', 'old/app.py'),
+        ([{'old_path': 'app.py', 'new_path': 'app.py', 'diff': ''}], 13, None, 'Line 13', 'app.py'),  # collapsed
+        ([{'old_path': 'other.py', 'new_path': 'other.py', 'diff': GL_DIFF}], 13, None, 'Line 13', 'app.py'),
     ],
 )
 @respx.mock
-def test_gitlab_inline_comment_without_file_diff_sends_new_line_only(files):
+def test_gitlab_unclassifiable_line_falls_back_to_file_comment(files, line, end_line, label, old_path):
     respx.get(f'{GL_MRS}/7').mock(return_value=httpx.Response(200, json=_gl_mr()))
     _gl_diffs(files)
     route = respx.post(f'{GL_MRS}/7/discussions').mock(return_value=httpx.Response(201, json={'notes': [{'id': 1}]}))
+    body = '🔴 **Bug**\n\nSomething is off.\n\n```suggestion\nfixed = True\n```'
 
-    _gl_provider().post_comment('grp/sub/repo', 7, 'Bug', file_path='app.py', line=13, source_commit='head1')
+    _gl_provider().post_comment(
+        'grp/sub/repo', 7, body, file_path='app.py', line=line, end_line=end_line, source_commit='head1'
+    )
 
-    position = json.loads(route.calls.last.request.content)['position']
-    assert position['new_line'] == 13
-    assert 'old_line' not in position
-    assert position['old_path'] == 'app.py'
+    payload = json.loads(route.calls.last.request.content)
+    assert payload['position']['position_type'] == 'file'
+    assert (payload['position']['old_path'], payload['position']['new_path']) == (old_path, 'app.py')
+    assert 'new_line' not in payload['position']
+    assert 'old_line' not in payload['position']
+    assert payload['body'] == f'{label}: 🔴 **Bug**\n\nSomething is off.\n\n[](reviewd)'
 
 
 @respx.mock

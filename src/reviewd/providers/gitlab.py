@@ -17,23 +17,14 @@ BOT_MARKER = '[](reviewd)'
 HUNK_HEADER = re.compile(r'^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@')
 
 
+SUGGESTION_BLOCK = re.compile(r'\n*```suggestion\n.*?\n```', re.S)
+
+
 @dataclass
 class _FileDiff:
     old_path: str
-    # new line -> old line for lines inside hunks; None means the line was added
-    hunk_lines: dict[int, int | None] = field(default_factory=dict)
-    # (next new line, new - old) after each diff line; lines between hunks reuse the latest offset
-    offsets: list[tuple[int, int]] = field(default_factory=list)
-
-    def old_line_for(self, new_line: int) -> int | None:
-        if new_line in self.hunk_lines:
-            return self.hunk_lines[new_line]
-        offset = 0
-        for start, hunk_offset in self.offsets:
-            if new_line < start:
-                break
-            offset = hunk_offset
-        return new_line - offset
+    # new line -> old line for every line shown in the diff; None means the line was added
+    lines: dict[int, int | None] = field(default_factory=dict)
 
 
 def _parse_diff(old_path: str, diff: str) -> _FileDiff:
@@ -43,20 +34,22 @@ def _parse_diff(old_path: str, diff: str) -> _FileDiff:
         header = HUNK_HEADER.match(text)
         if header:
             old, new = int(header.group(1)), int(header.group(3))
-            continue
-        if text.startswith('+'):
-            parsed.hunk_lines[new] = None
+        elif text.startswith('+'):
+            parsed.lines[new] = None
             new += 1
         elif text.startswith('-'):
             old += 1
         elif text.startswith(' ') or text == '':
-            parsed.hunk_lines[new] = old
+            parsed.lines[new] = old
             old += 1
             new += 1
-        else:
-            continue
-        parsed.offsets.append((new, new - old))
     return parsed
+
+
+def _line_label(line: int | None, end_line: int | None) -> str:
+    if line is not None and end_line is not None and end_line != line:
+        return f'Lines {line}-{end_line}'
+    return f'Line {end_line if end_line is not None else line}'
 
 
 class GitlabProvider(GitProvider):
@@ -119,12 +112,12 @@ class GitlabProvider(GitProvider):
             self._file_diffs[key] = {f['new_path']: _parse_diff(f['old_path'], f['diff']) for f in files if f['diff']}
         return self._file_diffs[key]
 
-    def _line_position(self, repo_slug: str, pr_id: int, head_sha: str, file_path: str, line: int) -> dict:
-        file_diff = self._get_file_diffs(repo_slug, pr_id, head_sha).get(file_path)
-        if file_diff is None:
-            return {'old_path': file_path, 'new_path': file_path, 'new_line': line}
-        position = {'old_path': file_diff.old_path, 'new_path': file_path, 'new_line': line}
-        old_line = file_diff.old_line_for(line)
+    @staticmethod
+    def _line_position(file_diff: _FileDiff | None, file_path: str, line: int) -> dict | None:
+        if file_diff is None or line not in file_diff.lines:
+            return None
+        position = {'position_type': 'text', 'old_path': file_diff.old_path, 'new_path': file_path, 'new_line': line}
+        old_line = file_diff.lines[line]
         if old_line is not None:
             position['old_line'] = old_line
         return position
@@ -161,12 +154,19 @@ class GitlabProvider(GitProvider):
                 'start_sha': refs['start_sha'],
                 'head_sha': refs['head_sha'],
             }
+            file_diff = self._get_file_diffs(repo_slug, pr_id, refs['head_sha']).get(file_path)
             target_line = end_line if end_line is not None else line
-            if target_line is not None:
-                position['position_type'] = 'text'
-                position |= self._line_position(repo_slug, pr_id, refs['head_sha'], file_path, target_line)
+            line_position = None if target_line is None else self._line_position(file_diff, file_path, target_line)
+            if line_position:
+                position |= line_position
             else:
-                position |= {'position_type': 'file', 'old_path': file_path, 'new_path': file_path}
+                if target_line is not None:
+                    # A guessed anchor can land on the wrong line; a file-level comment naming the line can't
+                    logger.info('%s:%d is not in the MR diff, posting a file-level comment', file_path, target_line)
+                    label = _line_label(line, end_line)
+                    marked_body = f'{label}: {SUGGESTION_BLOCK.sub("", body)}\n\n{BOT_MARKER}'
+                old_path = file_diff.old_path if file_diff else file_path
+                position |= {'position_type': 'file', 'old_path': old_path, 'new_path': file_path}
             resp = self._request('POST', f'{mr_url}/discussions', json={'body': marked_body, 'position': position})
             comment_id = resp.json()['notes'][0]['id']
 
