@@ -7,8 +7,7 @@ from urllib.parse import quote
 import httpx
 
 from reviewd.models import GitlabConfig, PRInfo
-from reviewd.providers.base import GitProvider
-from reviewd.providers.github import _parse_next_link
+from reviewd.providers.base import GitProvider, parse_next_link
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +51,7 @@ class GitlabProvider(GitProvider):
         while True:
             resp = self._request('GET', url, params=params)
             results.extend(resp.json())
-            next_url = _parse_next_link(resp.headers.get('link', ''))
+            next_url = parse_next_link(resp.headers.get('link', ''))
             if not next_url:
                 break
             # The next link carries the full query; params={} would make httpx strip it

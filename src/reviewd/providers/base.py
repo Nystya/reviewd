@@ -5,6 +5,14 @@ from abc import ABC, abstractmethod
 from reviewd.models import PRInfo
 
 
+def parse_next_link(link_header: str) -> str | None:
+    for part in link_header.split(','):
+        if 'rel="next"' in part:
+            url = part.split(';')[0].strip().strip('<>')
+            return url
+    return None
+
+
 class GitProvider(ABC):
     @abstractmethod
     def list_open_prs(self, repo_slug: str) -> list[PRInfo]: ...

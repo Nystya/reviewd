@@ -6,7 +6,7 @@ import time
 import httpx
 
 from reviewd.models import GithubConfig, PRInfo
-from reviewd.providers.base import GitProvider
+from reviewd.providers.base import GitProvider, parse_next_link
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +56,7 @@ class GithubProvider(GitProvider):
             resp = self._request('GET', url, params=params)
             results.extend(resp.json())
             link = resp.headers.get('link', '')
-            next_url = _parse_next_link(link)
+            next_url = parse_next_link(link)
             if not next_url:
                 break
             url = next_url
@@ -149,11 +149,3 @@ class GithubProvider(GitProvider):
         resp.raise_for_status()
         logger.info('Approved PR #%d', pr_id)
         return True
-
-
-def _parse_next_link(link_header: str) -> str | None:
-    for part in link_header.split(','):
-        if 'rel="next"' in part:
-            url = part.split(';')[0].strip().strip('<>')
-            return url
-    return None
