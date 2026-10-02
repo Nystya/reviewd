@@ -146,7 +146,7 @@ A repo on a different GitLab instance can set its own `gitlab:` block (`token` +
 
 </details>
 
-Both providers can be used in the same config. Tokens support `${ENV_VAR}` substitution.
+GitHub, GitLab and BitBucket repos can be mixed in the same config. Tokens support `${ENV_VAR}` substitution.
 
 ### 3. Review
 
