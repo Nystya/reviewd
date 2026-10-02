@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import time
 from urllib.parse import quote
 
 import httpx
@@ -22,29 +21,6 @@ class GitlabProvider(GitProvider):
             timeout=30,
         )
         self._diff_refs: dict[tuple[str, int], dict] = {}
-
-    def _request(self, method: str, url: str, **kwargs) -> httpx.Response:
-        max_retries = 3
-        for attempt in range(max_retries + 1):
-            resp = self.client.request(method, url, **kwargs)
-            if resp.status_code != 429 or attempt == max_retries:
-                resp.raise_for_status()
-                return resp
-            retry_after = int(resp.headers.get('Retry-After', 2**attempt))
-            logger.warning('Rate limited (429), retrying in %ds (attempt %d/%d)', retry_after, attempt + 1, max_retries)
-            time.sleep(retry_after)
-        return resp  # unreachable
-
-    def _request_raw(self, method: str, url: str, **kwargs) -> httpx.Response:
-        max_retries = 3
-        for attempt in range(max_retries + 1):
-            resp = self.client.request(method, url, **kwargs)
-            if resp.status_code != 429 or attempt == max_retries:
-                return resp
-            retry_after = int(resp.headers.get('Retry-After', 2**attempt))
-            logger.warning('Rate limited (429), retrying in %ds (attempt %d/%d)', retry_after, attempt + 1, max_retries)
-            time.sleep(retry_after)
-        return resp  # unreachable
 
     def _paginate(self, url: str, params: dict | None = None) -> list[dict]:
         results = []

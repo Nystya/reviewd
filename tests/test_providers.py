@@ -384,7 +384,7 @@ def test_gitlab_approve_server_error_raises():
 @respx.mock
 def test_gitlab_retries_on_rate_limit(monkeypatch):
     sleeps = []
-    monkeypatch.setattr('reviewd.providers.gitlab.time.sleep', sleeps.append)
+    monkeypatch.setattr('reviewd.providers.base.time.sleep', sleeps.append)
     route = respx.get(f'{GL_MRS}/7').mock(
         side_effect=[
             httpx.Response(429, headers={'Retry-After': '3'}),
@@ -394,6 +394,7 @@ def test_gitlab_retries_on_rate_limit(monkeypatch):
     assert _gl_provider().get_pr('grp/sub/repo', 7).pr_id == 7
     assert route.call_count == 2
     assert sleeps == [3]
+
 
 
 @pytest.mark.parametrize(
