@@ -14,7 +14,7 @@ REMOTE_PATTERNS = [
     (r'github\.com[:/](?P<slug>[^/\s]+/[^/\s]+)', 'github'),
     (r'bitbucket\.org[:/](?P<slug>[^/\s]+/[^/\s]+)', 'bitbucket'),
     # gitlab.com or a self-hosted instance whose hostname contains "gitlab"; slug may include subgroups
-    (r'(?P<host>[\w.-]*gitlab[\w.-]*)(?::\d+)?[:/](?P<slug>[^\s:]+/[^\s:]+)', 'gitlab'),
+    (r'(?:^|@|://)(?P<host>[\w.-]*gitlab[\w.-]*)(?::\d+)?[:/](?P<slug>[^\s:]+/[^\s:]+)', 'gitlab'),
 ]
 
 GITLAB_DEFAULT_URL = 'https://gitlab.com'

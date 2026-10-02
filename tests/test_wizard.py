@@ -49,8 +49,16 @@ def test_detect_non_gitlab_remote_mentioning_gitlab(tmp_path, url, provider):
     assert _detect_remote(_repo_with_remote(tmp_path, url))['provider'] == provider
 
 
-def test_detect_unknown_remote(tmp_path):
-    assert _detect_remote(_repo_with_remote(tmp_path, 'git@git.example.com:team/repo.git')) is None
+@pytest.mark.parametrize(
+    'url',
+    [
+        'git@git.example.com:team/repo.git',
+        'https://example.com/gitlab/grp/repo.git',
+        'git@git.example.com:gitlab/sub/repo.git',
+    ],
+)
+def test_detect_unknown_remote(tmp_path, url):
+    assert _detect_remote(_repo_with_remote(tmp_path, url)) is None
 
 
 def _gitlab_repo(name: str, slug: str, gitlab_url: str) -> dict:
